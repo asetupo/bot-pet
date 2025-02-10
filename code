@@ -1,0 +1,175 @@
+import telegram
+import logging
+import random
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import Updater, CommandHandler, ConversationHandler, MessageHandler, Filters, CallbackContext
+
+# Замените 'YOUR_TELEGRAM_BOT_TOKEN' на токен вашего бота
+TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+
+# Логирование
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Состояния разговора
+(GOAL, LEVEL, PREFERENCES, CONFIRMATION) = range(4)
+
+# Данные пользователей (в реальном приложении - база данных)
+user_data = {}
+
+# База данных тренировок (пример, расширьте ее)
+workout_plans = {
+    "похудение": {
+        "начинающий": {
+            "бег": ["Легкий бег 30 минут", "Ходьба 15 минут"],
+            "дома": ["Приседания 3x15", "Отжимания от стены 3x10", "Планка 30 секунд"],
+            "зал": ["Беговая дорожка 20 минут", "Эллипс 15 минут", "Легкие веса 3 подхода по 15 повторений"]
+        },
+        "средний": {
+            "бег": ["Интервальный бег 40 минут", "Бег в гору 20 минут"],
+            "дома": ["Берпи 3x10", "Выпады 3x12", "Планка 1 минута"],
+            "зал": ["Беговая дорожка 30 минут", "Эллипс 20 минут", "Кардио-тренажеры 30 минут"]
+        },
+        "продвинутый": {
+            "бег": ["Длительный бег 60 минут", "Спринты 10x100 метров"],
+            "дома": ["Прыжки на скакалке 3x100", "Подтягивания (если возможно) 3x8", "Удержание планки 2 минуты"],
+            "зал": ["Интервальная тренировка на беговой дорожке 45 минут", "HIIT тренировка 30 минут"]
+        }
+    },
+    "набор массы": {
+        "начинающий": {
+            "зал": ["Жим лежа 3x8", "Приседания со штангой 3x8", "Становая тяга 1x5"]
+        },
+        "средний": {
+            "зал": ["Жим лежа 4x6", "Приседания со штангой 4x6", "Становая тяга 3x3"]
+        },
+        "продвинутый": {
+            "зал": ["Жим лежа 5x5", "Приседания со штангой 5x5", "Становая тяга 5x1"]
+        }
+    },
+    "поддержание формы": {
+        "начинающий": {
+            "ходьба": ["Прогулка 30 минут"],
+            "дома": ["Легкая зарядка 15 минут"]
+        },
+        "средний": {
+            "бег": ["Легкий бег 20 минут"],
+            "дома": ["Зарядка 20 минут"]
+        },
+        "продвинутый": {
+            "бег": ["Интервальный бег 30 минут"],
+            "дома": ["Интенсивная зарядка 30 минут"]
+        }
+    }
+}
+
+# Этап 1: Выбор цели
+def start(update: Update, context: CallbackContext) -> int:
+    reply_keyboard = [['Похудение', 'Набор массы', 'Поддержание формы']]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+
+    update.message.reply_text(
+        "Привет! Какая у вас цель?",
+        reply_markup=markup,
+    )
+    return GOAL
+
+# Этап 2: Выбор уровня подготовки
+def goal(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    user_data[user_id] = {'goal': update.message.text}
+
+    reply_keyboard = [['Начинающий', 'Средний', 'Продвинутый']]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+
+    update.message.reply_text(
+        "Отлично! Какой у вас уровень подготовки?",
+        reply_markup=markup,
+    )
+    return LEVEL
+
+# Этап 3: Выбор предпочтений
+def level(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    user_data[user_id]['level'] = update.message.text
+
+    update.message.reply_text(
+        "Прекрасно! Какие у вас предпочтения в тренировках? (Например, бег, дома, зал.  Можно перечислить несколько через запятую.)",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return PREFERENCES
+
+# Этап 4: Подтверждение и генерация плана
+def preferences(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    user_data[user_id]['preferences'] = [pref.strip() for pref in update.message.text.split(',')]
+
+    # Генерация тренировочного плана
+    workout_plan = generate_workout_plan(user_id, user_data[user_id]['goal'], user_data[user_id]['level'], user_data[user_id]['preferences'])
+    context.user_data['workout_plan'] = workout_plan  #Сохраняем план в контексте
+
+    update.message.reply_text(f"Ваш индивидуальный план тренировок:\n{workout_plan}\n\nВам нравится этот план? (да/нет)")
+    return CONFIRMATION
+
+
+def confirmation(update: Update, context: CallbackContext) -> int:
+    user_id = update.message.from_user.id
+    answer = update.message.text.lower()
+
+    if answer == "да":
+        update.message.reply_text("Отлично! Приступайте к тренировкам!")
+    elif answer == "нет":
+        update.message.reply_text("Пожалуйста, начните сначала, чтобы изменить ваши предпочтения. /start")
+    else:
+        update.message.reply_text("Пожалуйста, ответьте 'да' или 'нет'.")
+
+    return ConversationHandler.END
+
+# Функция генерации тренировочного плана
+def generate_workout_plan(user_id, goal, level, preferences):
+    plan = []
+    available_workouts = workout_plans.get(goal, {}).get(level, {})
+    if not available_workouts:
+        return "К сожалению, для выбранных параметров нет подходящего плана. Попробуйте изменить параметры."
+
+    for preference in preferences:
+        if preference in available_workouts:
+            workouts = available_workouts[preference]
+            plan.extend(workouts)
+
+    if not plan:
+        return "К сожалению, для выбранных предпочтений нет подходящих упражнений. Попробуйте изменить предпочтения."
+
+    return "\n".join(plan)
+
+# Обработчик отмены
+def cancel(update: Update, context: CallbackContext) -> int:
+    update.message.reply_text(
+        'Действие отменено.', reply_markup=ReplyKeyboardRemove()
+    )
+    return ConversationHandler.END
+
+def main():
+    updater = Updater(TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
+
+    # Создаем обработчик разговоров
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            GOAL: [MessageHandler(Filters.regex(r'^(Похудение|Набор массы|Поддержание формы)$'), goal)],
+            LEVEL: [MessageHandler(Filters.regex(r'^(Начинающий|Средний|Продвинутый)$'), level)],
+            PREFERENCES: [MessageHandler(Filters.text & ~Filters.command, preferences)],
+            CONFIRMATION: [MessageHandler(Filters.regex(r'^(да|нет)$'),confirmation)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    dispatcher.add_handler(conv_handler)
+
+    # Запуск бота
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
