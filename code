@@ -1,175 +1,184 @@
-import telegram
+import asyncio
 import logging
-import random
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Updater, CommandHandler, ConversationHandler, MessageHandler, Filters, CallbackContext
 
-# Замените 'YOUR_TELEGRAM_BOT_TOKEN' на токен вашего бота
-TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Text, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# Логирование
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Замените на свой токен бота
+BOT_TOKEN = "7881347395:AAFZb0j2hmghWLNNuM4eyesWDkc_nQyNvII"
 
-# Состояния разговора
-(GOAL, LEVEL, PREFERENCES, CONFIRMATION) = range(4)
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
 
-# Данные пользователей (в реальном приложении - база данных)
+# Инициализация бота и диспетчера
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+#  Временное хранилище данных (в реальном проекте используйте БД)
 user_data = {}
 
-# База данных тренировок (пример, расширьте ее)
-workout_plans = {
-    "похудение": {
-        "начинающий": {
-            "бег": ["Легкий бег 30 минут", "Ходьба 15 минут"],
-            "дома": ["Приседания 3x15", "Отжимания от стены 3x10", "Планка 30 секунд"],
-            "зал": ["Беговая дорожка 20 минут", "Эллипс 15 минут", "Легкие веса 3 подхода по 15 повторений"]
-        },
-        "средний": {
-            "бег": ["Интервальный бег 40 минут", "Бег в гору 20 минут"],
-            "дома": ["Берпи 3x10", "Выпады 3x12", "Планка 1 минута"],
-            "зал": ["Беговая дорожка 30 минут", "Эллипс 20 минут", "Кардио-тренажеры 30 минут"]
-        },
-        "продвинутый": {
-            "бег": ["Длительный бег 60 минут", "Спринты 10x100 метров"],
-            "дома": ["Прыжки на скакалке 3x100", "Подтягивания (если возможно) 3x8", "Удержание планки 2 минуты"],
-            "зал": ["Интервальная тренировка на беговой дорожке 45 минут", "HIIT тренировка 30 минут"]
-        }
-    },
-    "набор массы": {
-        "начинающий": {
-            "зал": ["Жим лежа 3x8", "Приседания со штангой 3x8", "Становая тяга 1x5"]
-        },
-        "средний": {
-            "зал": ["Жим лежа 4x6", "Приседания со штангой 4x6", "Становая тяга 3x3"]
-        },
-        "продвинутый": {
-            "зал": ["Жим лежа 5x5", "Приседания со штангой 5x5", "Становая тяга 5x1"]
-        }
-    },
-    "поддержание формы": {
-        "начинающий": {
-            "ходьба": ["Прогулка 30 минут"],
-            "дома": ["Легкая зарядка 15 минут"]
-        },
-        "средний": {
-            "бег": ["Легкий бег 20 минут"],
-            "дома": ["Зарядка 20 минут"]
-        },
-        "продвинутый": {
-            "бег": ["Интервальный бег 30 минут"],
-            "дома": ["Интенсивная зарядка 30 минут"]
-        }
-    }
-}
 
-# Этап 1: Выбор цели
-def start(update: Update, context: CallbackContext) -> int:
-    reply_keyboard = [['Похудение', 'Набор массы', 'Поддержание формы']]
-    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+# --- Определение состояний ---
+class UserForm(StatesGroup):
+    goal = State()
+    level = State()
+    preferences = State()  # Виды спорта, оборудование
+    track_progress = State()
 
-    update.message.reply_text(
-        "Привет! Какая у вас цель?",
-        reply_markup=markup,
+
+# --- Обработчики команд ---
+
+@dp.message(CommandStart())
+async def command_start_handler(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Привет! Я бот, который поможет тебе составить индивидуальный план тренировок.\n"
+        "Какова твоя цель?",
+        reply_markup=get_goal_keyboard(),
     )
-    return GOAL
+    await state.set_state(UserForm.goal)
 
-# Этап 2: Выбор уровня подготовки
-def goal(update: Update, context: CallbackContext) -> int:
-    user_id = update.message.from_user.id
-    user_data[user_id] = {'goal': update.message.text}
 
-    reply_keyboard = [['Начинающий', 'Средний', 'Продвинутый']]
-    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+# --- Обработчики выбора цели ---
 
-    update.message.reply_text(
-        "Отлично! Какой у вас уровень подготовки?",
-        reply_markup=markup,
+def get_goal_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Похудение", callback_data="goal:похудение")
+    builder.button(text="Набор массы", callback_data="goal:набор_массы")
+    builder.button(text="Поддержание формы", callback_data="goal:поддержание_формы")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+@dp.callback_query(UserForm.goal, Text(startswith="goal:"))
+async def process_goal(callback: types.CallbackQuery, state: FSMContext):  # Text используется здесь
+    goal = callback.data.split(":")[1]
+    await state.update_data(goal=goal)
+    await callback.message.edit_text(f"Твоя цель: {goal}\n"
+                                      f"Какой у тебя уровень подготовки?",
+                                      reply_markup=get_level_keyboard())
+    await state.set_state(UserForm.level)
+    await callback.answer()
+
+
+# --- Обработчики выбора уровня подготовки ---
+def get_level_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Начинающий", callback_data="level:начинающий")
+    builder.button(text="Средний", callback_data="level:средний")
+    builder.button(text="Продвинутый", callback_data="level:продвинутый")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+@dp.callback_query(UserForm.level, Text(startswith="level:"))
+async def process_level(callback: types.CallbackQuery, state: FSMContext):  # Text используется здесь
+    level = callback.data.split(":")[1]
+    await state.update_data(level=level)
+    await callback.message.edit_text(f"Твой уровень: {level}\n"
+                                      f"Какие у тебя предпочтения по видам спорта и доступному оборудованию? (Напиши текстом, через запятую)",
+                                      reply_markup=None)  # Убираем клавиатуру
+    await state.set_state(UserForm.preferences)
+    await callback.answer()
+
+
+# --- Обработчик ввода предпочтений ---
+
+@dp.message(UserForm.preferences)
+async def process_preferences(message: types.Message, state: FSMContext):
+    preferences = message.text
+    await state.update_data(preferences=preferences)
+    data = await state.get_data()
+    goal = data["goal"]
+    level = data["level"]
+    preferences_text = data["preferences"]
+
+    # Генерируем план тренировок (заглушка)
+    training_plan = generate_training_plan(goal, level, preferences_text)
+
+    await message.answer(f"Отлично! Вот твой индивидуальный план тренировок:\n\n{training_plan}\n\n"
+                         f"Хочешь отслеживать свой прогресс? (да/нет)")
+    await state.set_state(UserForm.track_progress)
+
+
+# --- Обработчик отслеживания прогресса ---
+@dp.message(UserForm.track_progress, Text(text=["да", "нет"], ignore_case=True))
+async def process_track_progress(message: types.Message, state: FSMContext):  # Text используется здесь
+    track_progress = message.text.lower() == "да"
+    data = await state.get_data()
+    user_id = message.from_user.id
+    user_data[user_id] = data
+    user_data[user_id]["track_progress"] = track_progress
+
+    await message.answer("Спасибо! Твои данные сохранены.\n"
+                         "Напиши /help для списка команд.")
+    await state.clear()
+
+# --- Обработчик неправильного ввода отслеживания прогресса ---
+@dp.message(UserForm.track_progress)
+async def process_invalid_track_progress(message: types.Message, state: FSMContext):
+    await message.answer("Пожалуйста, ответьте 'да' или 'нет'.")
+
+# --- Заглушка для генерации плана тренировок ---
+
+def generate_training_plan(goal, level, preferences):
+    # Здесь должна быть логика генерации плана тренировок
+    # с учетом цели, уровня и предпочтений.
+    # В реальном проекте здесь будет сложный алгоритм или интеграция с API.
+
+    plan = f"План тренировок для {goal}, уровень: {level}\n"
+    plan += f"Предпочтения: {preferences}\n\n"
+
+    if goal == "похудение":
+        plan += "- Кардио 3 раза в неделю по 30 минут.\n"
+        plan += "- Силовые тренировки 2 раза в неделю.\n"
+        plan += "- Следить за питанием.\n"
+    elif goal == "набор_массы":
+        plan += "- Силовые тренировки 3-4 раза в неделю.\n"
+        plan += "- Увеличение калорийности питания.\n"
+        plan += "- Отдых и восстановление.\n"
+    else:  # Поддержание формы
+        plan += "- Разнообразные тренировки 2-3 раза в неделю.\n"
+        plan += "- Поддержание здорового питания.\n"
+
+    plan += "\n(Это примерный план, он может быть изменен)"
+
+    return plan
+
+# --- Обработчик команды /help ---
+@dp.message(commands=["help"])
+async def command_help_handler(message: types.Message):
+    help_text = (
+        "Доступные команды:\n"
+        "/start - Начать работу с ботом\n"
+        "/help - Показать это сообщение\n"
+        "/mydata - Показать твои текущие данные\n" # Добавлена команда
     )
-    return LEVEL
+    await message.answer(help_text)
 
-# Этап 3: Выбор предпочтений
-def level(update: Update, context: CallbackContext) -> int:
-    user_id = update.message.from_user.id
-    user_data[user_id]['level'] = update.message.text
-
-    update.message.reply_text(
-        "Прекрасно! Какие у вас предпочтения в тренировках? (Например, бег, дома, зал.  Можно перечислить несколько через запятую.)",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    return PREFERENCES
-
-# Этап 4: Подтверждение и генерация плана
-def preferences(update: Update, context: CallbackContext) -> int:
-    user_id = update.message.from_user.id
-    user_data[user_id]['preferences'] = [pref.strip() for pref in update.message.text.split(',')]
-
-    # Генерация тренировочного плана
-    workout_plan = generate_workout_plan(user_id, user_data[user_id]['goal'], user_data[user_id]['level'], user_data[user_id]['preferences'])
-    context.user_data['workout_plan'] = workout_plan  #Сохраняем план в контексте
-
-    update.message.reply_text(f"Ваш индивидуальный план тренировок:\n{workout_plan}\n\nВам нравится этот план? (да/нет)")
-    return CONFIRMATION
-
-
-def confirmation(update: Update, context: CallbackContext) -> int:
-    user_id = update.message.from_user.id
-    answer = update.message.text.lower()
-
-    if answer == "да":
-        update.message.reply_text("Отлично! Приступайте к тренировкам!")
-    elif answer == "нет":
-        update.message.reply_text("Пожалуйста, начните сначала, чтобы изменить ваши предпочтения. /start")
+# --- Обработчик команды /mydata ---
+@dp.message(commands=["mydata"])
+async def command_mydata_handler(message: types.Message):
+    user_id = message.from_user.id
+    if user_id in user_data:
+        data = user_data[user_id]
+        data_text = (
+            "Твои данные:\n"
+            f"Цель: {data['goal']}\n"
+            f"Уровень подготовки: {data['level']}\n"
+            f"Предпочтения: {data['preferences']}\n"
+            f"Отслеживание прогресса: {'Да' if data['track_progress'] else 'Нет'}"
+        )
+        await message.answer(data_text)
     else:
-        update.message.reply_text("Пожалуйста, ответьте 'да' или 'нет'.")
+        await message.answer("У тебя пока нет данных. Начни с /start")
 
-    return ConversationHandler.END
+# --- Функция запуска бота ---
+async def main():
+    await dp.start_polling(bot)
 
-# Функция генерации тренировочного плана
-def generate_workout_plan(user_id, goal, level, preferences):
-    plan = []
-    available_workouts = workout_plans.get(goal, {}).get(level, {})
-    if not available_workouts:
-        return "К сожалению, для выбранных параметров нет подходящего плана. Попробуйте изменить параметры."
-
-    for preference in preferences:
-        if preference in available_workouts:
-            workouts = available_workouts[preference]
-            plan.extend(workouts)
-
-    if not plan:
-        return "К сожалению, для выбранных предпочтений нет подходящих упражнений. Попробуйте изменить предпочтения."
-
-    return "\n".join(plan)
-
-# Обработчик отмены
-def cancel(update: Update, context: CallbackContext) -> int:
-    update.message.reply_text(
-        'Действие отменено.', reply_markup=ReplyKeyboardRemove()
-    )
-    return ConversationHandler.END
-
-def main():
-    updater = Updater(TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
-
-    # Создаем обработчик разговоров
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            GOAL: [MessageHandler(Filters.regex(r'^(Похудение|Набор массы|Поддержание формы)$'), goal)],
-            LEVEL: [MessageHandler(Filters.regex(r'^(Начинающий|Средний|Продвинутый)$'), level)],
-            PREFERENCES: [MessageHandler(Filters.text & ~Filters.command, preferences)],
-            CONFIRMATION: [MessageHandler(Filters.regex(r'^(да|нет)$'),confirmation)]
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
-
-    dispatcher.add_handler(conv_handler)
-
-    # Запуск бота
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    asyncio.run(main())
