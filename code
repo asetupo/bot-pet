@@ -8,7 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # Замените на свой токен бота
-BOT_TOKEN = "7881347395:AAFZb0j2hmghWLNNuM4eyesWDkc_nQyNvII"
+BOT_TOKEN = ""
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
