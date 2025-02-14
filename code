@@ -1,184 +1,427 @@
 import asyncio
 import logging
+import random
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Text, CommandStart
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import Message, CallbackQuery, InputMediaPhoto, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# Замените на свой токен бота
-BOT_TOKEN = ""
+# Замените 'YOUR_BOT_TOKEN' на токен вашего бота
+BOT_TOKEN = ''
 
-# Настройка логирования
+# Включаем логирование, чтобы видеть ошибки
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота и диспетчера
+# Инициализируем бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-#  Временное хранилище данных (в реальном проекте используйте БД)
-user_data = {}
+# --- Состояние питомца ---
+class Pet:
+    def __init__(self, name):
+        self.name = name
+        self.hunger = 50
+        self.happiness = 50
+        self.level = 1
+        self.experience = 0
+        self.is_sleeping = False
 
+    def feed(self):
+        if self.is_sleeping:
+            return "Питомца сейчас нельзя кормить, он спит😴"
 
-# --- Определение состояний ---
-class UserForm(StatesGroup):
-    goal = State()
-    level = State()
-    preferences = State()  # Виды спорта, оборудование
-    track_progress = State()
+        feed_amount = random.randint(15, 25)
+        happiness_increase = random.randint(5, 10)
+        self.hunger = min(100, self.hunger + feed_amount)
+        self.happiness = min(100, self.happiness + happiness_increase)
+        self.add_experience(1000)
+        return f"Покормил! Ммм, вкусно! 😋 Голод +{feed_amount}, Счастье +{happiness_increase}, Опыт +1000"
 
+    def pet(self):
+        if self.is_sleeping:
+            return "Питомца сейчас нельзя гладить, он спит😴"
 
-# --- Обработчики команд ---
+        pet_amount = random.randint(5, 10)
+        self.happiness = min(100, self.happiness + pet_amount)
+        self.add_experience(3)
+        return f"Погладил! Питомцу понравилось! 😊 Счастье +{pet_amount}, Опыт +3"
 
-@dp.message(CommandStart())
-async def command_start_handler(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer(
-        "Привет! Я бот, который поможет тебе составить индивидуальный план тренировок.\n"
-        "Какова твоя цель?",
-        reply_markup=get_goal_keyboard(),
-    )
-    await state.set_state(UserForm.goal)
+    def sleep(self):
+        if self.is_sleeping:
+            return "Питомет уже спит 😴"
+        self.is_sleeping = True
+        self.hunger = max(0, self.hunger - 5)
+        return "Питомец уснул! 😴"
 
+    def wake_up(self):
+        if not self.is_sleeping:
+            return "Питомет и так не спит 😠"
+        self.is_sleeping = False
+        self.happiness = min(100, self.happiness + 10)
+        return "Питомец проснулся! 🥰"
 
-# --- Обработчики выбора цели ---
+    def status(self):
+        hunger_emoji = "🍖" * (self.hunger // 10) + "🦴" * ((100 - self.hunger) // 10)
+        happiness_emoji = "😃" * (self.happiness // 10) + "🙁" * ((100 - self.happiness) // 10)
+        sleeping_status = "😴" if self.is_sleeping else ""
 
-def get_goal_keyboard():
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Похудение", callback_data="goal:похудение")
-    builder.button(text="Набор массы", callback_data="goal:набор_массы")
-    builder.button(text="Поддержание формы", callback_data="goal:поддержание_формы")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-@dp.callback_query(UserForm.goal, Text(startswith="goal:"))
-async def process_goal(callback: types.CallbackQuery, state: FSMContext):  # Text используется здесь
-    goal = callback.data.split(":")[1]
-    await state.update_data(goal=goal)
-    await callback.message.edit_text(f"Твоя цель: {goal}\n"
-                                      f"Какой у тебя уровень подготовки?",
-                                      reply_markup=get_level_keyboard())
-    await state.set_state(UserForm.level)
-    await callback.answer()
-
-
-# --- Обработчики выбора уровня подготовки ---
-def get_level_keyboard():
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Начинающий", callback_data="level:начинающий")
-    builder.button(text="Средний", callback_data="level:средний")
-    builder.button(text="Продвинутый", callback_data="level:продвинутый")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-@dp.callback_query(UserForm.level, Text(startswith="level:"))
-async def process_level(callback: types.CallbackQuery, state: FSMContext):  # Text используется здесь
-    level = callback.data.split(":")[1]
-    await state.update_data(level=level)
-    await callback.message.edit_text(f"Твой уровень: {level}\n"
-                                      f"Какие у тебя предпочтения по видам спорта и доступному оборудованию? (Напиши текстом, через запятую)",
-                                      reply_markup=None)  # Убираем клавиатуру
-    await state.set_state(UserForm.preferences)
-    await callback.answer()
-
-
-# --- Обработчик ввода предпочтений ---
-
-@dp.message(UserForm.preferences)
-async def process_preferences(message: types.Message, state: FSMContext):
-    preferences = message.text
-    await state.update_data(preferences=preferences)
-    data = await state.get_data()
-    goal = data["goal"]
-    level = data["level"]
-    preferences_text = data["preferences"]
-
-    # Генерируем план тренировок (заглушка)
-    training_plan = generate_training_plan(goal, level, preferences_text)
-
-    await message.answer(f"Отлично! Вот твой индивидуальный план тренировок:\n\n{training_plan}\n\n"
-                         f"Хочешь отслеживать свой прогресс? (да/нет)")
-    await state.set_state(UserForm.track_progress)
-
-
-# --- Обработчик отслеживания прогресса ---
-@dp.message(UserForm.track_progress, Text(text=["да", "нет"], ignore_case=True))
-async def process_track_progress(message: types.Message, state: FSMContext):  # Text используется здесь
-    track_progress = message.text.lower() == "да"
-    data = await state.get_data()
-    user_id = message.from_user.id
-    user_data[user_id] = data
-    user_data[user_id]["track_progress"] = track_progress
-
-    await message.answer("Спасибо! Твои данные сохранены.\n"
-                         "Напиши /help для списка команд.")
-    await state.clear()
-
-# --- Обработчик неправильного ввода отслеживания прогресса ---
-@dp.message(UserForm.track_progress)
-async def process_invalid_track_progress(message: types.Message, state: FSMContext):
-    await message.answer("Пожалуйста, ответьте 'да' или 'нет'.")
-
-# --- Заглушка для генерации плана тренировок ---
-
-def generate_training_plan(goal, level, preferences):
-    # Здесь должна быть логика генерации плана тренировок
-    # с учетом цели, уровня и предпочтений.
-    # В реальном проекте здесь будет сложный алгоритм или интеграция с API.
-
-    plan = f"План тренировок для {goal}, уровень: {level}\n"
-    plan += f"Предпочтения: {preferences}\n\n"
-
-    if goal == "похудение":
-        plan += "- Кардио 3 раза в неделю по 30 минут.\n"
-        plan += "- Силовые тренировки 2 раза в неделю.\n"
-        plan += "- Следить за питанием.\n"
-    elif goal == "набор_массы":
-        plan += "- Силовые тренировки 3-4 раза в неделю.\n"
-        plan += "- Увеличение калорийности питания.\n"
-        plan += "- Отдых и восстановление.\n"
-    else:  # Поддержание формы
-        plan += "- Разнообразные тренировки 2-3 раза в неделю.\n"
-        plan += "- Поддержание здорового питания.\n"
-
-    plan += "\n(Это примерный план, он может быть изменен)"
-
-    return plan
-
-# --- Обработчик команды /help ---
-@dp.message(commands=["help"])
-async def command_help_handler(message: types.Message):
-    help_text = (
-        "Доступные команды:\n"
-        "/start - Начать работу с ботом\n"
-        "/help - Показать это сообщение\n"
-        "/mydata - Показать твои текущие данные\n" # Добавлена команда
-    )
-    await message.answer(help_text)
-
-# --- Обработчик команды /mydata ---
-@dp.message(commands=["mydata"])
-async def command_mydata_handler(message: types.Message):
-    user_id = message.from_user.id
-    if user_id in user_data:
-        data = user_data[user_id]
-        data_text = (
-            "Твои данные:\n"
-            f"Цель: {data['goal']}\n"
-            f"Уровень подготовки: {data['level']}\n"
-            f"Предпочтения: {data['preferences']}\n"
-            f"Отслеживание прогресса: {'Да' if data['track_progress'] else 'Нет'}"
+        return (
+            f"Уровень: {self.level} 🌟\n"
+            f"Опыт: {self.experience}\n"
+            f"Голод: {self.hunger}% {hunger_emoji}\n"
+            f"Счастье: {self.happiness}% {happiness_emoji} {sleeping_status}"
         )
-        await message.answer(data_text)
-    else:
-        await message.answer("У тебя пока нет данных. Начни с /start")
 
-# --- Функция запуска бота ---
+    def add_experience(self, amount):
+        self.experience += amount
+        self.check_level_up()
+
+    def check_level_up(self):
+        required_experience = self.level * 100
+        if self.experience >= required_experience:
+            self.level += 1
+            self.experience -= required_experience
+            return f"🎉 Питомет достиг {self.level} уровня!"
+        return None
+
+    def get_available_games(self):
+        available_games = []
+        if self.level >= 1:
+            available_games.append('fetch')
+        if self.level >= 3:
+            available_games.append('tickle')
+        if self.level >= 5:
+            available_games.append('puzzle')
+        if self.level >= 7:
+            available_games.append('guess_number')  # Новая игра
+        if self.level >= 9:
+            available_games.append('quiz')  # Новая игра
+        return available_games
+    
+    def play_tickle(self):
+        play_amount = random.randint(20, 30)
+        hunger_decrease = random.randint(3, 7)
+        self.happiness = min(100, self.happiness + play_amount)
+        self.hunger = max(0, self.hunger - hunger_decrease)
+        self.add_experience(12)
+        return f"Пощекотали питомца! 🤣 Счастье +{play_amount}, Голод -{hunger_decrease}, Опыт +12"
+
+# --- FSM для интерактивных игр ---
+class GameState(StatesGroup):
+    waiting_for_answer = State()
+    waiting_for_number = State() # Для игры "Угадай число"
+    waiting_for_quiz_answer = State() # Для игры "Викторина"
+
+# --- FSM для установки имени питомца ---
+class PetName(StatesGroup):
+    waiting_for_name = State()
+
+current_game = None # Глобальная переменная для текущей игры
+my_pet = None # Глобальная переменная для экземпляра класса Pet
+secret_number = None  # Глобальная переменная для хранения загаданного числа
+
+# --- Новые игры ---
+
+async def start_guess_number_game(message: types.Message, state: FSMContext):
+    global current_game, secret_number
+    current_game = "guess_number"
+    secret_number = random.randint(1, 100) # Загадываем число
+    await message.reply("Я загадал число от 1 до 100. Попробуй угадать!")
+    await state.set_state(GameState.waiting_for_number) # Переходим в состояние ожидания числа
+
+async def start_quiz_game(message: types.Message, state: FSMContext):
+    global current_game
+    current_game = "quiz"
+    question = "Сколько будет 2 + 2?"
+    builder = InlineKeyboardBuilder()
+    builder.button(text="3", callback_data="quiz_3")
+    builder.button(text="4", callback_data="quiz_4")
+    builder.button(text="5", callback_data="quiz_5")
+    await message.reply(question, reply_markup=builder.as_markup())
+    await state.set_state(GameState.waiting_for_quiz_answer)
+
+@dp.message(GameState.waiting_for_number)
+async def process_guess_number(message: types.Message, state: FSMContext):
+    global current_game, secret_number
+
+    if current_game != "guess_number":
+        return  # Проверяем, что игра все еще активна
+
+    try:
+        guess = int(message.text)
+    except ValueError:
+        await message.reply("Пожалуйста, введи целое число.")
+        return
+
+    if guess < secret_number:
+        await message.reply("Загаданное число больше.")
+    elif guess > secret_number:
+        await message.reply("Загаданное число меньше.")
+    else:
+        play_amount = random.randint(25, 35)  # Больше награда за угадывание
+        my_pet.happiness = min(100, my_pet.happiness + play_amount)
+        my_pet.add_experience(20)
+        level_up_message = my_pet.check_level_up()
+        result_message = f"Поздравляю! Ты угадал число {secret_number}! 😄 Счастье +{play_amount}, Опыт +20"
+        if level_up_message:
+            result_message += "\n" + level_up_message
+        await message.reply(result_message)
+        current_game = None
+        secret_number = None  # Сбрасываем загаданное число
+        await state.clear()
+        await show_main_menu(message)
+
+
+@dp.callback_query(GameState.waiting_for_quiz_answer, lambda c: c.data.startswith("quiz_"))
+async def process_quiz_answer(callback: CallbackQuery, state: FSMContext):
+    global current_game
+
+    if current_game != "quiz":
+        return  # Проверяем, что игра все еще активна
+
+    answer = callback.data.split("_")[1]
+    if answer == "4":
+        play_amount = random.randint(15, 25)
+        my_pet.happiness = min(100, my_pet.happiness + play_amount)
+        my_pet.add_experience(15)
+        level_up_message = my_pet.check_level_up()
+        result_message = f"Правильно! 2 + 2 = 4! 🎉 Счастье +{play_amount}, Опыт +15"
+        if level_up_message:
+            result_message += "\n" + level_up_message
+        await callback.message.answer(result_message)
+    else:
+        await callback.message.answer("Неправильно. Попробуй еще раз!")
+
+    current_game = None
+    await state.clear()
+    await show_main_menu(callback.message)
+
+async def start_puzzle_game(message: types.Message, state: FSMContext):
+    global current_game
+    current_game = "puzzle"
+    puzzle_question = "Какая фигура должна быть следующей: Квадрат, Круг, Треугольник, Квадрат, Круг, ...?"
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Треугольник", callback_data="puzzle_Треугольник")
+    builder.button(text="Квадрат", callback_data="puzzle_Квадрат")
+    builder.button(text="Круг", callback_data="puzzle_Круг")
+    await message.answer(
+        puzzle_question,
+        reply_markup=builder.as_markup()
+    )
+    await state.set_state(GameState.waiting_for_answer)
+
+async def start_fetch_game(message: types.Message, state: FSMContext):
+    global current_game
+    current_game = "fetch"
+    # Отправляем изображение для игры в апорт
+    # Замените URL на рабочий URL изображения!
+    try:
+        await bot.send_photo(
+            chat_id=message.chat.id,
+            photo="https://www.easygifanimator.net/images/samples/video-to-gif-sample.gif",  # Пример работающего URL (GIF)
+            caption="Брось мячик! Напиши 'бросил', когда бросишь."
+        )
+    except Exception as e:
+        logging.error(f"Ошибка при отправке изображения: {e}")
+        await message.reply("Не удалось начать игру в Апорт.  Попробуйте позже.")  # Сообщаем пользователю об ошибке
+        await show_main_menu(message)  # Возвращаемся в главное меню
+        await state.clear()
+
+    await state.set_state(GameState.waiting_for_answer)
+
+@dp.message(GameState.waiting_for_answer)
+async def process_answer(message: types.Message, state: FSMContext):
+    global current_game
+    logging.info(f"process_answer: Получено сообщение: {message.text}")
+    logging.info(f"process_answer: Текущая игра: {current_game}")
+
+    if current_game == "fetch":
+        if message.text.lower() == "бросил":
+            play_amount = random.randint(15, 25)
+            hunger_decrease = random.randint(5, 10)
+            my_pet.happiness = min(100, my_pet.happiness + play_amount)
+            my_pet.hunger = max(0, my_pet.hunger - hunger_decrease)
+            my_pet.add_experience(15)
+            level_up_message = my_pet.check_level_up()
+            result_message = f"Отлично, поиграли в апорт! 🎾 Счастье +{play_amount}, Голод -{hunger_decrease}, Опыт +15"
+            if level_up_message:
+                result_message += "\n" + level_up_message
+
+            await message.reply(result_message)
+        else:
+            await message.reply("Не понял. Напиши 'бросил', когда бросишь мячик.")
+    elif current_game == "puzzle":
+        # Добавим обработку пазла здесь (если он есть)
+        await message.reply("Обработка пазла ещё не реализована.")
+    current_game = None
+    await state.clear()
+    await show_main_menu(message)
+
+@dp.callback_query(GameState.waiting_for_answer, lambda c: c.data.startswith("puzzle_"))
+async def process_puzzle_answer(callback: CallbackQuery, state: FSMContext):
+    global current_game
+    answer = callback.data.split("_")[1]
+    if answer == "Треугольник":
+        play_amount = random.randint(10, 20)
+        hunger_decrease = random.randint(2, 5)
+        my_pet.happiness = min(100, my_pet.happiness + play_amount)
+        my_pet.hunger = max(0, my_pet.hunger - hunger_decrease)
+        my_pet.add_experience(18)
+        level_up_message = my_pet.check_level_up()
+        result_message = f"Правильно! Поиграли в пазл! 🧩 Счастье +{play_amount}, Голод -{hunger_decrease}, Опыт +18"
+        if level_up_message:
+            result_message += "\n" + level_up_message
+
+        await callback.message.answer(result_message)
+    else:
+        await callback.message.answer("Неправильно. Попробуй еще раз!")
+
+    current_game = None
+    await state.clear()
+    await show_main_menu(callback.message)
+
+# --- Обработчики ---
+
+# Обработчик команды /start
+@dp.message(CommandStart())
+async def start_command(message: types.Message, state: FSMContext):
+    await message.reply("Привет! Это бот-питомец. Как назовем твоего питомца?")
+    await state.set_state(PetName.waiting_for_name)
+
+# Обработчик для получения имени питомца
+@dp.message(PetName.waiting_for_name)
+async def get_pet_name(message: types.Message, state: FSMContext):
+    name = message.text
+    await state.update_data(pet_name=name)
+    data = await state.get_data()
+    global my_pet
+    my_pet = Pet(name) # Создаем экземпляр Pet здесь, используя имя из FSM.
+    await message.reply(f"Отлично! Твоего питомца зовут {my_pet.name}.")
+    await state.clear()
+    await show_main_menu(message)
+
+async def show_main_menu(message: types.Message):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Покормить", callback_data="feed")
+    builder.button(text="Играть", callback_data="play")
+    builder.button(text="Погладить", callback_data="pet")
+    builder.button(text="Уложить спать", callback_data="sleep")
+    builder.button(text="Разбудить", callback_data="wake_up")
+    builder.button(text="Статус", callback_data="status")
+    await message.answer(
+        "Что будем делать с питомцем?",
+        reply_markup=builder.as_markup()
+    )
+
+@dp.callback_query(lambda c: c.data == "feed")
+async def feed_callback(callback: types.CallbackQuery):
+    await bot.answer_callback_query(callback.id)
+    message = my_pet.feed()
+    level_up_message = my_pet.check_level_up()
+    if level_up_message:
+        message += "\n" + level_up_message
+    await bot.send_message(callback.from_user.id, message)
+    await show_main_menu(callback.message)
+
+@dp.callback_query(lambda c: c.data == "play")
+async def play_callback(callback: types.CallbackQuery, state: FSMContext):
+    available_games = my_pet.get_available_games()
+    if not available_games:
+        await bot.answer_callback_query(callback.id, "Нет доступных игр для этого уровня!")
+        await bot.send_message(callback.from_user.id, "Нет доступных игр для этого уровня! 🙁")
+        await show_main_menu(callback.message)
+        return
+
+    # Отображаем меню выбора игры
+    builder = InlineKeyboardBuilder()
+    buttons = []
+    if 'fetch' in available_games:
+        buttons.append(InlineKeyboardButton(text="Апорт", callback_data="start_fetch"))
+    if 'puzzle' in available_games:
+        buttons.append(InlineKeyboardButton(text="Пазл", callback_data="start_puzzle"))
+    if 'tickle' in available_games:
+        buttons.append(InlineKeyboardButton(text="Щекотка", callback_data="tickle"))
+    if 'guess_number' in available_games:
+        buttons.append(InlineKeyboardButton(text="Угадай число", callback_data="start_guess_number")) # Новая игра
+    if 'quiz' in available_games:
+        buttons.append(InlineKeyboardButton(text="Викторина", callback_data="start_quiz")) # Новая игра
+
+    # row() добавляет кнопки в один ряд
+    builder.row(*buttons)
+
+    await bot.answer_callback_query(callback.id)
+    await bot.send_message(callback.from_user.id, "Выбери игру:", reply_markup=builder.as_markup())
+
+@dp.callback_query(lambda c: c.data == "start_fetch")
+async def fetch_callback(callback: types.CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    await start_fetch_game(callback.message, state)
+
+@dp.callback_query(lambda c: c.data == "start_puzzle")
+async def puzzle_callback(callback: types.CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    await start_puzzle_game(callback.message, state)
+
+@dp.callback_query(lambda c: c.data == "tickle")
+async def tickle_callback(callback: types.CallbackQuery):
+    await bot.answer_callback_query(callback.id)
+    message = my_pet.play_tickle() # Используем старую игру
+    level_up_message = my_pet.check_level_up()
+    if level_up_message:
+        message += "\n" + level_up_message
+    await bot.send_message(callback.from_user.id, message)
+    await show_main_menu(callback.message)
+
+@dp.callback_query(lambda c: c.data == "start_guess_number")  # Добавляем обработчик для новой игры
+async def guess_number_callback(callback: types.CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    await start_guess_number_game(callback.message, state)
+
+@dp.callback_query(lambda c: c.data == "start_quiz")  # Добавляем обработчик для новой игры
+async def quiz_callback(callback: types.CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback.id)
+    await start_quiz_game(callback.message, state)
+
+
+@dp.callback_query(lambda c: c.data == "pet")
+async def pet_callback(callback: types.CallbackQuery):
+    await bot.answer_callback_query(callback.id)
+    message = my_pet.pet()
+    level_up_message = my_pet.check_level_up()
+    if level_up_message:
+        message += "\n" + level_up_message
+    await bot.send_message(callback.from_user.id, message)
+    await show_main_menu(callback.message)
+
+
+@dp.callback_query(lambda c: c.data == "sleep")
+async def sleep_callback(callback: types.CallbackQuery):
+    await bot.answer_callback_query(callback.id)
+    message = my_pet.sleep()
+    await bot.send_message(callback.from_user.id, message)
+    await show_main_menu(callback.message)
+
+@dp.callback_query(lambda c: c.data == "wake_up")
+async def wake_up_callback(callback: types.CallbackQuery):
+    await bot.answer_callback_query(callback.id)
+    message = my_pet.wake_up()
+    await bot.send_message(callback.from_user.id, message)
+    await show_main_menu(callback.message)
+
+@dp.callback_query(lambda c: c.data == "status")
+async def status_callback(callback: types.CallbackQuery):
+    await bot.answer_callback_query(callback.id)
+    message = my_pet.status()
+    await bot.send_message(callback.from_user.id, f"Статус {my_pet.name}:\n{message}")
+    await show_main_menu(callback.message)
+
+
+# Запуск процесса поллинга
 async def main():
     await dp.start_polling(bot)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())
