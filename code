@@ -10,8 +10,7 @@ from aiogram.types import Message, CallbackQuery, InputMediaPhoto, InlineKeyboar
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # Замените 'YOUR_BOT_TOKEN' на токен вашего бота
-BOT_TOKEN = '7865904225:AAEH69ydXI-GWLZ3vdDwFdIFLidkGdaKSAE'
-
+BOT_TOKEN = ''
 # Включаем логирование, чтобы видеть ошибки
 logging.basicConfig(level=logging.INFO)
 
